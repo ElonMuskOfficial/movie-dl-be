@@ -2,18 +2,14 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from fastapi import FastAPI, Query, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import Optional, Any
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import time
 
-app = FastAPI(
-    title="Universal Content Download API",
-    description="API for step-by-step extraction of content download links from sites like vegamovies.",
-    version="1.0.0"
-)
+app = FastAPI()
 
 # Add CORS middleware for frontend at http://localhost:5173
 app.add_middleware(
@@ -29,9 +25,14 @@ class APIResponse(BaseModel):
     next_step: Optional[Any] = None
     message: Optional[str] = None
 
-# Define a default browser-like User-Agent for all outgoing requests
+# Define a default browser-like User-Agent and more realistic headers for all outgoing requests
 DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.207 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://google.com",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 @app.get("/")
@@ -44,6 +45,7 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
     try:
         resp = requests.get(search_url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
+        time.sleep(1)
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -74,6 +76,7 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
     try:
         resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
+        time.sleep(1)
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -132,6 +135,7 @@ def get_next_options(url: str = Query(..., description="URL of the download butt
     try:
         resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
+        time.sleep(1)
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -179,6 +183,7 @@ def resolve_download_links(url: str = Query(..., description="URL of the downloa
     try:
         resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
+        time.sleep(1)
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -197,6 +202,7 @@ def resolve_download_links(url: str = Query(..., description="URL of the downloa
         try:
             resp2 = requests.get(direct_url, headers=DEFAULT_HEADERS, verify=False)
             resp2.raise_for_status()
+            time.sleep(1)
         except requests.RequestException as e:
             raise HTTPException(status_code=502, detail=f"Failed to fetch direct URL: {str(e)}")
         soup2 = BeautifulSoup(resp2.text, "html.parser")
