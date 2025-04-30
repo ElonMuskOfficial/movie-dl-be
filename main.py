@@ -29,6 +29,11 @@ class APIResponse(BaseModel):
     next_step: Optional[Any] = None
     message: Optional[str] = None
 
+# Define a default browser-like User-Agent for all outgoing requests
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Server is running."}
@@ -37,7 +42,7 @@ def health_check():
 def search_vegamovies_endpoint(query: str = Query(..., description="Search query for vegamovies")):
     search_url = f"https://vegamovies.bot/?s={urllib.parse.quote_plus(query)}"
     try:
-        resp = requests.get(search_url, verify=False)
+        resp = requests.get(search_url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -67,7 +72,7 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
 @app.get("/extract")
 def extract_entries(url: str = Query(..., description="Direct URL to the movie/series page")):
     try:
-        resp = requests.get(url, verify=False)
+        resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -125,7 +130,7 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
 @app.get("/next-options")
 def get_next_options(url: str = Query(..., description="URL of the download button or group")):
     try:
-        resp = requests.get(url, verify=False)
+        resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -172,7 +177,7 @@ def get_next_options(url: str = Query(..., description="URL of the download butt
 def resolve_download_links(url: str = Query(..., description="URL of the download button or group")):
     import re
     try:
-        resp = requests.get(url, verify=False)
+        resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
         resp.raise_for_status()
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -190,7 +195,7 @@ def resolve_download_links(url: str = Query(..., description="URL of the downloa
                 break
     if direct_url:
         try:
-            resp2 = requests.get(direct_url, verify=False)
+            resp2 = requests.get(direct_url, headers=DEFAULT_HEADERS, verify=False)
             resp2.raise_for_status()
         except requests.RequestException as e:
             raise HTTPException(status_code=502, detail=f"Failed to fetch direct URL: {str(e)}")
