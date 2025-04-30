@@ -29,6 +29,10 @@ class APIResponse(BaseModel):
     next_step: Optional[Any] = None
     message: Optional[str] = None
 
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "Server is running."}
+
 @app.get("/search")
 def search_vegamovies_endpoint(query: str = Query(..., description="Search query for vegamovies")):
     search_url = f"https://vegamovies.bot/?s={urllib.parse.quote_plus(query)}"
