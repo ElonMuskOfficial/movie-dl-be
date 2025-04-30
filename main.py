@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import urllib.parse
 from fastapi.middleware.cors import CORSMiddleware
 import time
+import cloudscraper
 
 app = FastAPI()
 
@@ -36,7 +37,7 @@ def urllib_fetch(url):
     req.add_header('Upgrade-Insecure-Requests', '1')
     with urllib.request.urlopen(req) as response:
         html = response.read().decode('utf-8', errors='replace')
-    time.sleep(1)
+    time.sleep(2)
     return html
 
 @app.get("/")
@@ -225,3 +226,15 @@ def resolve_download_links(url: str = Query(..., description="URL of the downloa
         next_step=None,
         message="No direct download URL found."
     )
+
+@app.get("/cloudscraper-test")
+def cloudscraper_test(url: str = Query(..., description="URL to fetch using cloudscraper")):
+    try:
+        scraper = cloudscraper.create_scraper()
+        response = scraper.get(url, timeout=10)
+        response.raise_for_status()
+        # Return first 1000 characters for preview
+        preview = response.text[:5000]
+        return {"status": "success", "preview": preview, "length": len(response.text)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"cloudscraper error: {str(e)}")
