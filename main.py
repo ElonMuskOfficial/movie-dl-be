@@ -25,31 +25,17 @@ class APIResponse(BaseModel):
     next_step: Optional[Any] = None
     message: Optional[str] = None
 
-# Define a default browser-like User-Agent and more realistic headers for all outgoing requests
-DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.207 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://google.com",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-}
-
-# Helper function to fetch a URL using urllib with custom headers
+# Helper function to fetch a URL using urllib with custom headers (using add_header for each)
 def urllib_fetch(url):
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": DEFAULT_HEADERS["User-Agent"],
-            "Accept": DEFAULT_HEADERS["Accept"],
-            "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
-            "Referer": DEFAULT_HEADERS["Referer"],
-            "Connection": DEFAULT_HEADERS["Connection"],
-            "Upgrade-Insecure-Requests": DEFAULT_HEADERS["Upgrade-Insecure-Requests"],
-        }
-    )
+    req = urllib.request.Request(url)
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0')
+    req.add_header('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8')
+    req.add_header('Accept-Language', 'en-US,en;q=0.5')
+    req.add_header('Referer', 'https://google.com')
+    req.add_header('Connection', 'keep-alive')
+    req.add_header('Upgrade-Insecure-Requests', '1')
     with urllib.request.urlopen(req) as response:
-        html = response.read().decode("utf-8", errors="replace")
+        html = response.read().decode('utf-8', errors='replace')
     time.sleep(1)
     return html
 
