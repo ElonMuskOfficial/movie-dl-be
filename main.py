@@ -3,7 +3,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from fastapi import FastAPI, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Any
-import requests
+import urllib.request
 from bs4 import BeautifulSoup
 import urllib.parse
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +35,24 @@ DEFAULT_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
+# Helper function to fetch a URL using urllib with custom headers
+def urllib_fetch(url):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": DEFAULT_HEADERS["User-Agent"],
+            "Accept": DEFAULT_HEADERS["Accept"],
+            "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
+            "Referer": DEFAULT_HEADERS["Referer"],
+            "Connection": DEFAULT_HEADERS["Connection"],
+            "Upgrade-Insecure-Requests": DEFAULT_HEADERS["Upgrade-Insecure-Requests"],
+        }
+    )
+    with urllib.request.urlopen(req) as response:
+        html = response.read().decode("utf-8", errors="replace")
+    time.sleep(1)
+    return html
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Server is running."}
@@ -43,17 +61,14 @@ def health_check():
 def search_vegamovies_endpoint(query: str = Query(..., description="Search query for vegamovies")):
     search_url = f"https://vegamovies.bot/?s={urllib.parse.quote_plus(query)}"
     try:
-        resp = requests.get(search_url, headers=DEFAULT_HEADERS, verify=False)
-        resp.raise_for_status()
-        time.sleep(1)
-    except requests.RequestException as e:
+        html = urllib_fetch(search_url)
+    except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     results = []
     for post in soup.select('.post-title a')[:5]:
         title = post.get_text(strip=True)
         link = post.get('href')
-        # Try to extract the post-thumbnail image for this result
         thumb_elem = post.find_previous('div', class_='post-thumbnail')
         thumbnail = None
         if thumb_elem:
@@ -74,16 +89,13 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
 @app.get("/extract")
 def extract_entries(url: str = Query(..., description="Direct URL to the movie/series page")):
     try:
-        resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
-        resp.raise_for_status()
-        time.sleep(1)
-    except requests.RequestException as e:
+        html = urllib_fetch(url)
+    except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     entry_inner = soup.find(class_="entry-inner")
     if not entry_inner:
         raise HTTPException(status_code=404, detail=".entry-inner not found on the page.")
-    # Extract og:image or twitter:image
     image = None
     og_image = soup.find("meta", property="og:image")
     if og_image and og_image.get("content"):
@@ -92,7 +104,6 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
         twitter_image = soup.find("meta", property="twitter:image")
         if twitter_image and twitter_image.get("content"):
             image = twitter_image["content"]
-    # Extract main post title from h1.post-title if present, else fallback to <title>
     main_title_elem = soup.find("h1", class_="post-title")
     if main_title_elem and main_title_elem.get_text(strip=True):
         page_title = main_title_elem.get_text(strip=True)
@@ -133,12 +144,10 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
 @app.get("/next-options")
 def get_next_options(url: str = Query(..., description="URL of the download button or group")):
     try:
-        resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
-        resp.raise_for_status()
-        time.sleep(1)
-    except requests.RequestException as e:
+        html = urllib_fetch(url)
+    except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     entry_inner = soup.find(class_="entry-inner")
     if entry_inner:
         results = []
@@ -181,12 +190,10 @@ def get_next_options(url: str = Query(..., description="URL of the download butt
 def resolve_download_links(url: str = Query(..., description="URL of the download button or group")):
     import re
     try:
-        resp = requests.get(url, headers=DEFAULT_HEADERS, verify=False)
-        resp.raise_for_status()
-        time.sleep(1)
-    except requests.RequestException as e:
+        html = urllib_fetch(url)
+    except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     scripts = [
         s for s in soup.find_all("script")
         if s.get("type") == "text/javascript" or s.get("type") is None
@@ -200,12 +207,10 @@ def resolve_download_links(url: str = Query(..., description="URL of the downloa
                 break
     if direct_url:
         try:
-            resp2 = requests.get(direct_url, headers=DEFAULT_HEADERS, verify=False)
-            resp2.raise_for_status()
-            time.sleep(1)
-        except requests.RequestException as e:
+            html2 = urllib_fetch(direct_url)
+        except Exception as e:
             raise HTTPException(status_code=502, detail=f"Failed to fetch direct URL: {str(e)}")
-        soup2 = BeautifulSoup(resp2.text, "html.parser")
+        soup2 = BeautifulSoup(html2, "html.parser")
         server_texts = [
             "Download [Server : 10Gbps]",
             "Download [Server : 1]",
