@@ -42,9 +42,17 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
     for post in soup.select('.post-title a')[:5]:
         title = post.get_text(strip=True)
         link = post.get('href')
+        # Try to extract the post-thumbnail image for this result
+        thumb_elem = post.find_previous('div', class_='post-thumbnail')
+        thumbnail = None
+        if thumb_elem:
+            img = thumb_elem.find('img')
+            if img and img.get('src'):
+                thumbnail = img['src']
         results.append({
             "title": title,
             "url": link,
+            "thumbnail": thumbnail,
             "next_step": {"endpoint": "/extract", "params": {"url": link}}
         })
     return APIResponse(
@@ -63,6 +71,21 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
     entry_inner = soup.find(class_="entry-inner")
     if not entry_inner:
         raise HTTPException(status_code=404, detail=".entry-inner not found on the page.")
+    # Extract og:image or twitter:image
+    image = None
+    og_image = soup.find("meta", property="og:image")
+    if og_image and og_image.get("content"):
+        image = og_image["content"]
+    else:
+        twitter_image = soup.find("meta", property="twitter:image")
+        if twitter_image and twitter_image.get("content"):
+            image = twitter_image["content"]
+    # Extract main post title from h1.post-title if present, else fallback to <title>
+    main_title_elem = soup.find("h1", class_="post-title")
+    if main_title_elem and main_title_elem.get_text(strip=True):
+        page_title = main_title_elem.get_text(strip=True)
+    else:
+        page_title = soup.title.string.strip() if soup.title and soup.title.string else None
     results = []
     visited_titles = set()
     for p in entry_inner.find_all('p'):
@@ -87,7 +110,11 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
                 else:
                     results[-1]["buttons"].extend(buttons)
     return APIResponse(
-        data=results,
+        data={
+            "title": page_title,
+            "image": image,
+            "groups": results
+        },
         next_step="Call 'next_step' for a button to continue."
     )
 

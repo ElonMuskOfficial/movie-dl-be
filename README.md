@@ -59,6 +59,7 @@ On errors, HTTP status codes and a `detail` field are returned.
         {
           "title": "Movie Title",
           "url": "https://...",
+          "thumbnail": "https://.../image.jpg",
           "next_step": { "endpoint": "/extract", "params": { "url": "..." } }
         }
       ],
@@ -78,18 +79,22 @@ On errors, HTTP status codes and a `detail` field are returned.
 - **Response Example:**
     ```json
     {
-      "data": [
-        {
-          "title": "Quality Group",
-          "buttons": [
-            {
-              "text": "1080p",
-              "link": "...",
-              "next_step": { "endpoint": "/next-options", "params": { "url": "..." } }
-            }
-          ]
-        }
-      ],
+      "data": {
+        "title": "Main Post Title",
+        "image": "https://example.com/poster.jpg",
+        "groups": [
+          {
+            "title": "Quality Group",
+            "buttons": [
+              {
+                "text": "1080p",
+                "link": "...",
+                "next_step": { "endpoint": "/next-options", "params": { "url": "..." } }
+              }
+            ]
+          }
+        ]
+      },
       "next_step": "Call 'next_step' for a button to continue."
     }
     ```
