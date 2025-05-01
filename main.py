@@ -1,240 +1,223 @@
+# Standard library imports
+import os
+import time
+import random
+import gzip
+
+# Third-party imports
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-from fastapi import FastAPI, Query, HTTPException
-from pydantic import BaseModel
-from typing import Optional, Any
-import urllib.request
+import requests
 from bs4 import BeautifulSoup
-import urllib.parse
+import zstandard as zstd
+import brotli
+
+# FastAPI imports
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import time
-import cloudscraper
+from fastapi.responses import HTMLResponse
+from typing import Optional, Dict, Any
+
+# List of common desktop user agents
+desktop_common_ua = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.3",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.1",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.3",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.3",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.",
+    "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.3",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.6",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.3",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.2",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.54 Safari/537.3",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.4",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.3",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:102.0) Gecko/20100101 Firefox/102.",
+    "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.3"
+]
+
+def random_timeout() -> None:
+    """Add a random delay to avoid bot detection."""
+    time.sleep(1 + float(random.randint(1, 5)/random.randint(5, 13)))
 
 app = FastAPI()
 
-# Add CORS middleware for frontend at http://localhost:5173
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://movie-dl-fe.vercel.app","http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
-class APIResponse(BaseModel):
-    data: Optional[Any] = None
-    next_step: Optional[Any] = None
-    message: Optional[str] = None
-
-# Helper function to fetch a URL using urllib with custom headers (using add_header for each)
-def urllib_fetch(url):
-    req = urllib.request.Request(url)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0')
-    req.add_header('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8')
-    req.add_header('Accept-Language', 'en-US,en;q=0.5')
-    req.add_header('Referer', 'https://google.com')
-    req.add_header('Connection', 'keep-alive')
-    req.add_header('Upgrade-Insecure-Requests', '1')
-    with urllib.request.urlopen(req) as response:
-        html = response.read().decode('utf-8', errors='replace')
-    time.sleep(2)
-    return html
 
 @app.get("/")
-def health_check():
-    return {"status": "ok", "message": "Server is running."}
+def health_check() -> Dict[str, str]:
+    """Health check endpoint to verify the API is running."""
+    return {"status": "healthy"}
 
-@app.get("/search")
-def search_vegamovies_endpoint(query: str = Query(..., description="Search query for vegamovies")):
-    search_url = f"https://vegamovies.bot/?s={urllib.parse.quote_plus(query)}"
-    try:
-        html = urllib_fetch(search_url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(html, "html.parser")
-    results = []
-    for post in soup.select('.post-title a')[:5]:
-        title = post.get_text(strip=True)
-        link = post.get('href')
-        thumb_elem = post.find_previous('div', class_='post-thumbnail')
-        thumbnail = None
-        if thumb_elem:
-            img = thumb_elem.find('img')
-            if img and img.get('src'):
-                thumbnail = img['src']
-        results.append({
-            "title": title,
-            "url": link,
-            "thumbnail": thumbnail,
-            "next_step": {"endpoint": "/extract", "params": {"url": link}}
-        })
-    return APIResponse(
-        data=results,
-        next_step="Call 'next_step' for a result to continue."
-    )
 
-@app.get("/extract")
-def extract_entries(url: str = Query(..., description="Direct URL to the movie/series page")):
-    try:
-        html = urllib_fetch(url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(html, "html.parser")
-    entry_inner = soup.find(class_="entry-inner")
-    if not entry_inner:
-        raise HTTPException(status_code=404, detail=".entry-inner not found on the page.")
-    image = None
-    og_image = soup.find("meta", property="og:image")
-    if og_image and og_image.get("content"):
-        image = og_image["content"]
-    else:
-        twitter_image = soup.find("meta", property="twitter:image")
-        if twitter_image and twitter_image.get("content"):
-            image = twitter_image["content"]
-    main_title_elem = soup.find("h1", class_="post-title")
-    if main_title_elem and main_title_elem.get_text(strip=True):
-        page_title = main_title_elem.get_text(strip=True)
-    else:
-        page_title = soup.title.string.strip() if soup.title and soup.title.string else None
-    results = []
-    visited_titles = set()
-    for p in entry_inner.find_all('p'):
-        buttons = []
-        for a in p.find_all('a'):
-            rel = a.get('rel')
-            if rel and set(rel) == {"nofollow", "noopener", "noreferrer"}:
-                btn_text = a.get_text(strip=True)
-                btn_link = a.get('href')
-                buttons.append({
-                    "text": btn_text,
-                    "link": btn_link,
-                    "next_step": {"endpoint": "/next-options", "params": {"url": btn_link}}
-                })
-        if buttons:
-            heading = p.find_previous(['h3', 'h5', 'h4', 'h2'])
-            title = heading.get_text(strip=True) if heading else "Download Links"
-            if title or not visited_titles:
-                if title not in visited_titles:
-                    results.append({"title": title, "buttons": buttons})
-                    visited_titles.add(title)
-                else:
-                    results[-1]["buttons"].extend(buttons)
-    return APIResponse(
-        data={
-            "title": page_title,
-            "image": image,
-            "groups": results
-        },
-        next_step="Call 'next_step' for a button to continue."
-    )
+@app.get("/scrape")
+async def scrape_url_get(url: str, output_file: Optional[str] = "index.html") -> Dict[str, Any]:
+    """Endpoint to scrape a URL and save the content to a file.
+    
+    Args:
+        url: The URL to scrape
+        output_file: The file to save the scraped content to
+        
+    Returns:
+        A dictionary with the status, message, title, and file path
+    """
+    return await do_scrape(url, output_file)
 
-@app.get("/next-options")
-def get_next_options(url: str = Query(..., description="URL of the download button or group")):
+@app.get("/view-html", response_class=HTMLResponse)
+async def view_html(file_path: Optional[str] = "index.html") -> HTMLResponse:
+    """Endpoint to view the HTML content of a file.
+    
+    Args:
+        file_path: The path to the HTML file to view
+        
+    Returns:
+        The HTML content as an HTMLResponse
+        
+    Raises:
+        HTTPException: If the file doesn't exist or can't be read
+    """
     try:
-        html = urllib_fetch(url)
+        # Check if the file exists
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"File {file_path} not found")
+        
+        # Read the HTML content
+        with open(file_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        return HTMLResponse(content=html_content)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(html, "html.parser")
-    entry_inner = soup.find(class_="entry-inner")
-    if entry_inner:
-        results = []
-        visited_titles = set()
-        for p in entry_inner.find_all('p'):
-            buttons = []
-            for a in p.find_all('a'):
-                rel = a.get('rel')
-                if rel and set(rel) == {"nofollow", "noopener", "noreferrer"}:
-                    btn_text = a.get_text(strip=True)
-                    btn_link = a.get('href')
-                    buttons.append({
-                        "text": btn_text,
-                        "link": btn_link,
-                        "next_step": {"endpoint": "/resolve-downloads", "params": {"url": btn_link}}
-                    })
-            if buttons:
-                prev = p.find_previous_sibling()
-                if prev and prev.name in ['h3', 'h5', 'h4', 'h2']:
-                    title = prev.get_text(strip=True)
-                else:
-                    title = "Download Links"
-                if title or not visited_titles:
-                    if title not in visited_titles:
-                        results.append({"title": title, "buttons": buttons})
-                        visited_titles.add(title)
-                    else:
-                        results[-1]["buttons"].extend(buttons)
-        return APIResponse(
-            data=results,
-            next_step="Call 'next_step' for a button to continue."
-        )
-    return APIResponse(
-        data=None,
-        next_step={"endpoint": "/next-options", "params": {"url": url}},
-        message="No further download groups/buttons found. Use /next-options for direct download extraction."
-    )
+        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
-@app.get("/resolve-downloads")
-def resolve_download_links(url: str = Query(..., description="URL of the download button or group")):
-    import re
+
+
+def decompress_content(response: requests.Response) -> str:
+    """Decompress content based on the content-encoding header.
+    
+    Args:
+        response: The response object from requests
+        
+    Returns:
+        The decompressed content as a string
+    """
+    content_encoding = response.headers.get('content-encoding', '').lower()
+    
     try:
-        html = urllib_fetch(url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    soup = BeautifulSoup(html, "html.parser")
-    scripts = [
-        s for s in soup.find_all("script")
-        if s.get("type") == "text/javascript" or s.get("type") is None
-    ]
-    direct_url = None
-    for script in scripts:
-        if script.string:
-            match = re.search(r"var\s+url\s*=\s*['\"]([^'\"]+)['\"]", script.string)
-            if match:
-                direct_url = match.group(1)
-                break
-    if direct_url:
-        try:
-            html2 = urllib_fetch(direct_url)
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed to fetch direct URL: {str(e)}")
-        soup2 = BeautifulSoup(html2, "html.parser")
-        server_texts = [
-            "Download [Server : 10Gbps]",
-            "Download [Server : 1]",
-            "Download [PixeLServer : 2]"
-        ]
-        links = []
-        for a in soup2.find_all("a"):
-            link_text = a.get_text(strip=True)
-            if link_text in server_texts:
-                href = a.get("href")
-                if href:
-                    links.append({"text": link_text, "url": href})
-        if links:
-            return APIResponse(
-                data=links,
-                next_step=None
-            )
+        if 'zstd' in content_encoding:
+            dctx = zstd.ZstdDecompressor()
+            decompressed_content = dctx.decompress(response.content)
+            return decompressed_content.decode('utf-8', errors='ignore')
+        elif 'gzip' in content_encoding:
+            decompressed_content = gzip.decompress(response.content)
+            return decompressed_content.decode('utf-8', errors='ignore')
+        elif 'br' in content_encoding:
+            decompressed_content = brotli.decompress(response.content)
+            return decompressed_content.decode('utf-8', errors='ignore')
         else:
-            return APIResponse(
-                data=None,
-                next_step=None,
-                message="No actual download links found."
-            )
-    return APIResponse(
-        data=None,
-        next_step=None,
-        message="No direct download URL found."
-    )
-
-@app.get("/cloudscraper-test")
-def cloudscraper_test(url: str = Query(..., description="URL to fetch using cloudscraper")):
-    try:
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(url, timeout=10)
-        response.raise_for_status()
-        # Return first 1000 characters for preview
-        preview = response.text[:5000]
-        return {"status": "success", "preview": preview, "length": len(response.text)}
+            # No compression or unknown compression
+            return response.text
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"cloudscraper error: {str(e)}")
+        print(f"Error decompressing content ({content_encoding}): {e}")
+        return response.text
+
+
+def get_browser_headers() -> Dict[str, str]:
+    """Generate headers that mimic a real browser.
+    
+    Returns:
+        A dictionary of HTTP headers
+    """
+    user_agent = random.choice(desktop_common_ua)
+    return {
+        "User-Agent": user_agent,
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "en-GB,en;q=0.9",
+        "cache-control": "no-cache",
+        "pragma": "no-cache",
+        "sec-ch-ua": '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"Windows\"",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1"
+    }
+
+
+async def do_scrape(url: str, output_file: str = "index.html") -> Dict[str, Any]:
+    """Scrape a vcloud.lol URL and save the content to a file.
+    
+    Args:
+        url: The vcloud.lol URL to scrape
+        output_file: The file to save the scraped content to
+        
+    Returns:
+        A dictionary with the status, message, title, and file path
+        
+    Raises:
+        HTTPException: If there's an error scraping the URL
+    """
+    try:
+        # Verify it's a vcloud.lol URL
+        if 'vcloud.lol' not in url:
+            raise ValueError("This scraper only supports vcloud.lol URLs")
+            
+        # Create a session that doesn't verify SSL certificates
+        session = requests.Session()
+        session.verify = False
+        
+        # Add random timeout to avoid detection
+        random_timeout()
+        
+        # Add headers to mimic a browser
+        headers = get_browser_headers()
+        
+        # Make the request
+        response = session.get(url, headers=headers)
+        response.raise_for_status()
+        
+        # Handle compressed content
+        html_content = decompress_content(response)
+        
+        # Save the HTML content to a file
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        # Parse the HTML with BeautifulSoup
+        soup = BeautifulSoup(html_content, "html.parser")
+        
+        # Extract basic information
+        title = soup.title.text if soup.title else "No title found"
+        
+        return {
+            "status": "success",
+            "message": f"Successfully scraped {url} and saved to {output_file}",
+            "title": title,
+            "file_path": os.path.abspath(output_file)
+        }
+    except ValueError as e:
+        # Handle validation errors
+        raise HTTPException(status_code=400, detail=str(e))
+    except requests.exceptions.RequestException as e:
+        # Handle request errors
+        raise HTTPException(status_code=502, detail=f"Error fetching URL: {str(e)}")
+    except Exception as e:
+        # Handle other errors
+        raise HTTPException(status_code=500, detail=f"Scraping error: {str(e)}")
