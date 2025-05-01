@@ -1,8 +1,12 @@
 import requests
 from bs4 import BeautifulSoup
 import time
+import urllib3
 from typing import Optional, List, Tuple
 from fastapi import HTTPException
+
+# Disable insecure request warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_request_headers() -> dict:
     return {
@@ -17,11 +21,8 @@ def get_request_headers() -> dict:
 def fetch_url(url: str) -> str:
     """Fetch URL content with error handling and rate limiting."""
     try:
-        # Disable SSL verification warnings since we're handling them properly
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        response = requests.get(url, headers=get_request_headers(), verify=False)
+        # Using verify=False is required for some sites but should be used cautiously
+        response = requests.get(url, headers=get_request_headers(), verify=False, timeout=10)  # Added timeout for safety
         response.raise_for_status()
         time.sleep(2)  # Rate limiting
         return response.text

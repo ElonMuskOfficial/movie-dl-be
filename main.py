@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
 import urllib.parse
 
 from models import APIResponse, SearchResult, DownloadButton, DownloadGroup, ExtractResponse
 from utils import fetch_url, extract_image_url, extract_page_title, extract_download_buttons, extract_direct_url_from_scripts
+from config import Settings, get_settings
 
 app = FastAPI()
 
@@ -22,8 +23,11 @@ def health_check():
     return {"status": "ok", "message": "Server is running."}
 
 @app.get("/search")
-def search_vegamovies_endpoint(query: str = Query(..., description="Search query for vegamovies")):
-    search_url = f"https://vegamovies.bot/?s={urllib.parse.quote_plus(query)}"
+def search_vegamovies_endpoint(
+    query: str = Query(..., description="Search query for vegamovies"),
+    settings: Settings = Depends(get_settings)
+):
+    search_url = f"{settings.vegamovies_base_url}/?s={urllib.parse.quote_plus(query)}"
     html = fetch_url(search_url)
     soup = BeautifulSoup(html, "html.parser")
     
@@ -37,11 +41,16 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
             img = thumb_elem.find('img')
             if img and img.get('src'):
                 thumbnail = img['src']
+        next_step = {
+            "endpoint": "/extract",
+            "params": {"url": link},
+            "full_url": f"{settings.base_url}/extract?url={link}"
+        }
         results.append(SearchResult(
             title=title,
             url=link,
             thumbnail=thumbnail,
-            next_step={"endpoint": "/extract", "params": {"url": link}}
+            next_step=next_step
         ))
     
     return APIResponse(
@@ -50,13 +59,16 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
     )
 
 @app.get("/extract")
-def extract_entries(url: str = Query(..., description="Direct URL to the movie/series page")):
+def extract_entries(
+    url: str = Query(..., description="Direct URL to the movie/series page"),
+    settings: Settings = Depends(get_settings)
+):
     html = fetch_url(url)
     soup = BeautifulSoup(html, "html.parser")
     
-    entry_inner = soup.find(class_="entry-inner")
+    entry_inner = soup.find(class_="entry-inner") or soup.find(class_="entry-content")
     if not entry_inner:
-        raise HTTPException(status_code=404, detail=".entry-inner not found on the page.")
+        raise HTTPException(status_code=404, detail="Neither .entry-inner nor .entry-content found on the page.")
     
     image = extract_image_url(soup)
     page_title = extract_page_title(soup)
@@ -67,10 +79,15 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
     for p in entry_inner.find_all('p'):
         buttons = []
         for btn_text, btn_link in extract_download_buttons(p):
+            next_step = {
+                "endpoint": "/next-options",
+                "params": {"url": btn_link},
+                "full_url": f"{settings.base_url}/next-options?url={btn_link}"
+            }
             buttons.append(DownloadButton(
                 text=btn_text,
                 link=btn_link,
-                next_step={"endpoint": "/next-options", "params": {"url": btn_link}}
+                next_step=next_step
             ))
             
         if buttons:
@@ -84,6 +101,7 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
                 else:
                     results[-1].buttons.extend(buttons)
     
+    first_button = results[0].buttons[0] if results and results[0].buttons else None
     return APIResponse(
         data=ExtractResponse(
             title=page_title,
@@ -94,7 +112,10 @@ def extract_entries(url: str = Query(..., description="Direct URL to the movie/s
     )
 
 @app.get("/next-options")
-def get_next_options(url: str = Query(..., description="URL of the download button or group")):
+def get_next_options(
+    url: str = Query(..., description="URL of the download button or group"),
+    settings: Settings = Depends(get_settings)
+):
     html = fetch_url(url)
     soup = BeautifulSoup(html, "html.parser")
     entry_inner = soup.find(class_="entry-inner")
@@ -112,10 +133,15 @@ def get_next_options(url: str = Query(..., description="URL of the download butt
     for p in entry_inner.find_all('p'):
         buttons = []
         for btn_text, btn_link in extract_download_buttons(p):
+            next_step = {
+                "endpoint": "/resolve-downloads",
+                "params": {"url": btn_link},
+                "full_url": f"{settings.base_url}/resolve-downloads?url={btn_link}"
+            }
             buttons.append(DownloadButton(
                 text=btn_text,
                 link=btn_link,
-                next_step={"endpoint": "/resolve-downloads", "params": {"url": btn_link}}
+                next_step=next_step
             ))
             
         if buttons:
@@ -129,6 +155,7 @@ def get_next_options(url: str = Query(..., description="URL of the download butt
                 else:
                     results[-1].buttons.extend(buttons)
     
+    first_button = results[0].buttons[0] if results and results[0].buttons else None
     return APIResponse(
         data=results,
         next_step="Call 'next_step' for a button to continue."
