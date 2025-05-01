@@ -1,44 +1,21 @@
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from fastapi import FastAPI, Query, HTTPException
-from pydantic import BaseModel
-from typing import Optional, Any
-import urllib.request
+from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
 import urllib.parse
-from fastapi.middleware.cors import CORSMiddleware
-import time
-import cloudscraper
+
+from models import APIResponse, SearchResult, DownloadButton, DownloadGroup, ExtractResponse
+from utils import fetch_url, extract_image_url, extract_page_title, extract_download_buttons, extract_direct_url_from_scripts
 
 app = FastAPI()
 
-# Add CORS middleware for frontend at http://localhost:5173
+# Add CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://movie-dl-fe.vercel.app","http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
 )
-
-class APIResponse(BaseModel):
-    data: Optional[Any] = None
-    next_step: Optional[Any] = None
-    message: Optional[str] = None
-
-# Helper function to fetch a URL using urllib with custom headers (using add_header for each)
-def urllib_fetch(url):
-    req = urllib.request.Request(url)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0')
-    req.add_header('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8')
-    req.add_header('Accept-Language', 'en-US,en;q=0.5')
-    req.add_header('Referer', 'https://google.com')
-    req.add_header('Connection', 'keep-alive')
-    req.add_header('Upgrade-Insecure-Requests', '1')
-    with urllib.request.urlopen(req) as response:
-        html = response.read().decode('utf-8', errors='replace')
-    time.sleep(2)
-    return html
 
 @app.get("/")
 def health_check():
@@ -47,11 +24,9 @@ def health_check():
 @app.get("/search")
 def search_vegamovies_endpoint(query: str = Query(..., description="Search query for vegamovies")):
     search_url = f"https://vegamovies.bot/?s={urllib.parse.quote_plus(query)}"
-    try:
-        html = urllib_fetch(search_url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    html = fetch_url(search_url)
     soup = BeautifulSoup(html, "html.parser")
+    
     results = []
     for post in soup.select('.post-title a')[:5]:
         title = post.get_text(strip=True)
@@ -62,12 +37,13 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
             img = thumb_elem.find('img')
             if img and img.get('src'):
                 thumbnail = img['src']
-        results.append({
-            "title": title,
-            "url": link,
-            "thumbnail": thumbnail,
-            "next_step": {"endpoint": "/extract", "params": {"url": link}}
-        })
+        results.append(SearchResult(
+            title=title,
+            url=link,
+            thumbnail=thumbnail,
+            next_step={"endpoint": "/extract", "params": {"url": link}}
+        ))
+    
     return APIResponse(
         data=results,
         next_step="Call 'next_step' for a result to continue."
@@ -75,166 +51,121 @@ def search_vegamovies_endpoint(query: str = Query(..., description="Search query
 
 @app.get("/extract")
 def extract_entries(url: str = Query(..., description="Direct URL to the movie/series page")):
-    try:
-        html = urllib_fetch(url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    html = fetch_url(url)
     soup = BeautifulSoup(html, "html.parser")
+    
     entry_inner = soup.find(class_="entry-inner")
     if not entry_inner:
         raise HTTPException(status_code=404, detail=".entry-inner not found on the page.")
-    image = None
-    og_image = soup.find("meta", property="og:image")
-    if og_image and og_image.get("content"):
-        image = og_image["content"]
-    else:
-        twitter_image = soup.find("meta", property="twitter:image")
-        if twitter_image and twitter_image.get("content"):
-            image = twitter_image["content"]
-    main_title_elem = soup.find("h1", class_="post-title")
-    if main_title_elem and main_title_elem.get_text(strip=True):
-        page_title = main_title_elem.get_text(strip=True)
-    else:
-        page_title = soup.title.string.strip() if soup.title and soup.title.string else None
+    
+    image = extract_image_url(soup)
+    page_title = extract_page_title(soup)
+    
     results = []
     visited_titles = set()
+    
     for p in entry_inner.find_all('p'):
         buttons = []
-        for a in p.find_all('a'):
-            rel = a.get('rel')
-            if rel and set(rel) == {"nofollow", "noopener", "noreferrer"}:
-                btn_text = a.get_text(strip=True)
-                btn_link = a.get('href')
-                buttons.append({
-                    "text": btn_text,
-                    "link": btn_link,
-                    "next_step": {"endpoint": "/next-options", "params": {"url": btn_link}}
-                })
+        for btn_text, btn_link in extract_download_buttons(p):
+            buttons.append(DownloadButton(
+                text=btn_text,
+                link=btn_link,
+                next_step={"endpoint": "/next-options", "params": {"url": btn_link}}
+            ))
+            
         if buttons:
             heading = p.find_previous(['h3', 'h5', 'h4', 'h2'])
             title = heading.get_text(strip=True) if heading else "Download Links"
+            
             if title or not visited_titles:
                 if title not in visited_titles:
-                    results.append({"title": title, "buttons": buttons})
+                    results.append(DownloadGroup(title=title, buttons=buttons))
                     visited_titles.add(title)
                 else:
-                    results[-1]["buttons"].extend(buttons)
+                    results[-1].buttons.extend(buttons)
+    
     return APIResponse(
-        data={
-            "title": page_title,
-            "image": image,
-            "groups": results
-        },
+        data=ExtractResponse(
+            title=page_title,
+            image=image,
+            groups=results
+        ),
         next_step="Call 'next_step' for a button to continue."
     )
 
 @app.get("/next-options")
 def get_next_options(url: str = Query(..., description="URL of the download button or group")):
-    try:
-        html = urllib_fetch(url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    html = fetch_url(url)
     soup = BeautifulSoup(html, "html.parser")
     entry_inner = soup.find(class_="entry-inner")
-    if entry_inner:
-        results = []
-        visited_titles = set()
-        for p in entry_inner.find_all('p'):
-            buttons = []
-            for a in p.find_all('a'):
-                rel = a.get('rel')
-                if rel and set(rel) == {"nofollow", "noopener", "noreferrer"}:
-                    btn_text = a.get_text(strip=True)
-                    btn_link = a.get('href')
-                    buttons.append({
-                        "text": btn_text,
-                        "link": btn_link,
-                        "next_step": {"endpoint": "/resolve-downloads", "params": {"url": btn_link}}
-                    })
-            if buttons:
-                prev = p.find_previous_sibling()
-                if prev and prev.name in ['h3', 'h5', 'h4', 'h2']:
-                    title = prev.get_text(strip=True)
-                else:
-                    title = "Download Links"
-                if title or not visited_titles:
-                    if title not in visited_titles:
-                        results.append({"title": title, "buttons": buttons})
-                        visited_titles.add(title)
-                    else:
-                        results[-1]["buttons"].extend(buttons)
+    
+    if not entry_inner:
         return APIResponse(
-            data=results,
-            next_step="Call 'next_step' for a button to continue."
+            data=None,
+            next_step={"endpoint": "/next-options", "params": {"url": url}},
+            message="No further download groups/buttons found. Use /next-options for direct download extraction."
         )
+    
+    results = []
+    visited_titles = set()
+    
+    for p in entry_inner.find_all('p'):
+        buttons = []
+        for btn_text, btn_link in extract_download_buttons(p):
+            buttons.append(DownloadButton(
+                text=btn_text,
+                link=btn_link,
+                next_step={"endpoint": "/resolve-downloads", "params": {"url": btn_link}}
+            ))
+            
+        if buttons:
+            prev = p.find_previous_sibling()
+            title = prev.get_text(strip=True) if prev and prev.name in ['h3', 'h5', 'h4', 'h2'] else "Download Links"
+            
+            if title or not visited_titles:
+                if title not in visited_titles:
+                    results.append(DownloadGroup(title=title, buttons=buttons))
+                    visited_titles.add(title)
+                else:
+                    results[-1].buttons.extend(buttons)
+    
     return APIResponse(
-        data=None,
-        next_step={"endpoint": "/next-options", "params": {"url": url}},
-        message="No further download groups/buttons found. Use /next-options for direct download extraction."
+        data=results,
+        next_step="Call 'next_step' for a button to continue."
     )
 
 @app.get("/resolve-downloads")
 def resolve_download_links(url: str = Query(..., description="URL of the download button or group")):
-    import re
-    try:
-        html = urllib_fetch(url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    html = fetch_url(url)
     soup = BeautifulSoup(html, "html.parser")
-    scripts = [
-        s for s in soup.find_all("script")
-        if s.get("type") == "text/javascript" or s.get("type") is None
+    
+    direct_url = extract_direct_url_from_scripts(soup)
+    if not direct_url:
+        return APIResponse(
+            data=None,
+            next_step=None,
+            message="No direct download URL found."
+        )
+    
+    html2 = fetch_url(direct_url)
+    soup2 = BeautifulSoup(html2, "html.parser")
+    
+    server_texts = [
+        "Download [Server : 10Gbps]",
+        "Download [Server : 1]",
+        "Download [PixeLServer : 2]"
     ]
-    direct_url = None
-    for script in scripts:
-        if script.string:
-            match = re.search(r"var\s+url\s*=\s*['\"]([^'\"]+)['\"]", script.string)
-            if match:
-                direct_url = match.group(1)
-                break
-    if direct_url:
-        try:
-            html2 = urllib_fetch(direct_url)
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed to fetch direct URL: {str(e)}")
-        soup2 = BeautifulSoup(html2, "html.parser")
-        server_texts = [
-            "Download [Server : 10Gbps]",
-            "Download [Server : 1]",
-            "Download [PixeLServer : 2]"
-        ]
-        links = []
-        for a in soup2.find_all("a"):
-            link_text = a.get_text(strip=True)
-            if link_text in server_texts:
-                href = a.get("href")
-                if href:
-                    links.append({"text": link_text, "url": href})
-        if links:
-            return APIResponse(
-                data=links,
-                next_step=None
-            )
-        else:
-            return APIResponse(
-                data=None,
-                next_step=None,
-                message="No actual download links found."
-            )
+    
+    links = []
+    for a in soup2.find_all("a"):
+        link_text = a.get_text(strip=True)
+        if link_text in server_texts:
+            href = a.get("href")
+            if href:
+                links.append({"text": link_text, "url": href})
+    
     return APIResponse(
-        data=None,
+        data=links if links else None,
         next_step=None,
-        message="No direct download URL found."
+        message="No actual download links found." if not links else None
     )
-
-@app.get("/cloudscraper-test")
-def cloudscraper_test(url: str = Query(..., description="URL to fetch using cloudscraper")):
-    try:
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(url, timeout=10)
-        response.raise_for_status()
-        # Return first 1000 characters for preview
-        preview = response.text[:5000]
-        return {"status": "success", "preview": preview, "length": len(response.text)}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"cloudscraper error: {str(e)}")
