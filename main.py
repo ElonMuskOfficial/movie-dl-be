@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, HTMLResponse
 from server import fetch_download_server
 from fastapi import Query
+from bs4 import BeautifulSoup
+import cloudscraper
 import os
 
 app = FastAPI()
@@ -13,14 +15,12 @@ def read_root():
 @app.get("/fetch")
 def fetch_url():
     url = "https://vcloud.lol/2syw1ybxwaaxlkk"
-    result = fetch_download_server(url)
-    return JSONResponse(content=result)
+    scraper = cloudscraper.create_scraper()
+    response = scraper.get(url)
 
-@app.get("/view-response1")
-def view_response1():
-    filename = "response1.html"
-    if not os.path.exists(filename):
-        return JSONResponse(content={"error": f"File {filename} not found"}, status_code=404)
-    with open(filename, 'r', encoding='utf-8') as f:
-        html_content = f.read()
-    return HTMLResponse(content=html_content)
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        page_title = soup.title.string if soup.title else "No title found"
+        return {"title": page_title}
+    else:
+        return {"error": f"Failed to fetch page, status code: {response.status_code}"}
