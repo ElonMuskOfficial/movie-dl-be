@@ -1,14 +1,14 @@
 from config import DESKTOP_USER_AGENTS
-import requests
-from bs4 import BeautifulSoup
 import random
 import time
 import re
 import warnings
-from urllib3.exceptions import InsecureRequestWarning
+from bs4 import BeautifulSoup
+from selenium.webdriver.common.by import By
+import undetected_chromedriver as uc
+from selenium.webdriver.chrome.options import Options
 
-# Suppress only the InsecureRequestWarning from urllib3
-warnings.simplefilter('ignore', InsecureRequestWarning)
+# No insecure request warnings needed for Selenium
 
 # Headers for server links page with fixed string formatting
 HEADERS = {
@@ -44,76 +44,57 @@ def fetch_download_server(url):
     # Use a random user agent for each request
     user_agent = random.choice(DESKTOP_USER_AGENTS)
 
-    # Prepare headers with the selected user agent
-    headers = HEADERS.copy()
-    headers["User-Agent"] = user_agent
+    # Set up undetected_chromedriver in headless mode with custom user-agent
+    def make_chrome_options():
+        opts = Options()
+        opts.add_argument('--headless=new')
+        opts.add_argument(f'--user-agent={user_agent}')
+        opts.add_argument('--disable-blink-features=AutomationControlled')
+        opts.add_argument('--no-sandbox')
+        opts.add_argument('--disable-gpu')
+        opts.add_argument('--window-size=1920,1080')
+        opts.add_argument('--disable-dev-shm-usage')
+        return opts
 
     try:
         # Add a small delay to avoid being blocked
         time.sleep(random.uniform(1, 3))
 
-        # Make the request without cookies
-        response = requests.get(
-            url, 
-            headers=headers,
-            timeout=15,
-            verify=False
-        )
+        with uc.Chrome(options=make_chrome_options()) as driver:
+            driver.get(url)
+            time.sleep(random.uniform(2, 4))
+            html = driver.page_source
 
-        # Check if the request was successful
-        if response.status_code != 200:
-            return {
-                "error": f"Failed to fetch server page (Status code: {response.status_code})",
-                "url": url
-            }
-
-        # Parse the HTML content
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # Extract the page title
+        soup = BeautifulSoup(html, 'html.parser')
         title = soup.title.string.strip() if soup.title else "No title found"
-        
-        # Extract direct URL from scripts
         direct_url = extract_direct_url_from_scripts(soup)
-        
-        # If direct URL found, fetch the final download links
         download_links = []
         if direct_url:
-            # Add random delay between requests
             delay = random.uniform(1.5, 4.0)
             time.sleep(delay)
-            
             try:
-                # Fetch the direct URL page
-                direct_response = requests.get(
-                    direct_url, 
-                    headers=headers,
-                    timeout=15,
-                    verify=False
-                )
-                
-                if direct_response.status_code == 200:
-                    direct_soup = BeautifulSoup(direct_response.text, 'html.parser')
-                    download_links = extract_download_links(direct_soup)
+                with uc.Chrome(options=make_chrome_options()) as driver2:
+                    driver2.get(direct_url)
+                    time.sleep(random.uniform(2, 4))
+                    direct_html = driver2.page_source
+                direct_soup = BeautifulSoup(direct_html, 'html.parser')
+                download_links = extract_download_links(direct_soup)
             except Exception as e:
                 return {
                     "error": f"[server_links] Error fetching direct URL: {str(e)}",
                     "url": url,
                     "direct_url": direct_url
                 }
-
-        # Return details
         details = {
             "title": title,
             "url": url,
             "direct_url": direct_url,
             "download_links": download_links
         }
-
         return details
-
     except Exception as e:
         return {"error": f"[server_links] Error: {str(e)}", "url": url}
+
 
 
 def extract_direct_url_from_scripts(soup):
