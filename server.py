@@ -38,8 +38,9 @@ def fetch_download_server(url):
     Returns:
         dict: Details including page title, original URL, and direct download URL
     """
-    if not url or not url.startswith('http'):
-        return {"error": "Invalid URL provided"}
+    allowed_url = 'https://vcloud.lol/2syw1ybxwaaxlkk'
+    if url != allowed_url:
+        return {"error": f"Only {allowed_url} is allowed as input."}
 
     # Use a random user agent for each request
     user_agent = random.choice(DESKTOP_USER_AGENTS)
@@ -77,46 +78,15 @@ def fetch_download_server(url):
         # Extract the page title
         title = soup.title.string.strip() if soup.title else "No title found"
         
-        # Extract direct URL from scripts
+        # Extract direct URL from scripts (but do not follow it)
         direct_url = extract_direct_url_from_scripts(soup)
-        
-        # If direct URL found, fetch the final download links
-        download_links = []
-        if direct_url:
-            # Add random delay between requests
-            delay = random.uniform(1.5, 4.0)
-            time.sleep(delay)
-            
-            try:
-                # Fetch the direct URL page
-                direct_response = requests.get(
-                    direct_url, 
-                    headers=headers,
-                    timeout=15,
-                    verify=False
-                )
-                
-                if direct_response.status_code == 200:
-                    # Save the second response HTML
-                    with open('response2.html', 'w', encoding='utf-8') as f:
-                        f.write(direct_response.text)
-                    direct_soup = BeautifulSoup(direct_response.text, 'html.parser')
-                    download_links = extract_download_links(direct_soup)
-            except Exception as e:
-                return {
-                    "error": f"[server_links] Error fetching direct URL: {str(e)}",
-                    "url": url,
-                    "direct_url": direct_url
-                }
 
-        # Return details
+        # Return only the main page details
         details = {
             "title": title,
             "url": url,
             "direct_url": direct_url,
-            "download_links": download_links
         }
-
         return details
 
     except Exception as e:
@@ -147,33 +117,3 @@ def extract_direct_url_from_scripts(soup):
                 return match.group(1)
     
     return None
-
-
-def extract_download_links(soup):
-    """
-    Extract final download links from the direct URL page.
-    
-    Args:
-        soup: BeautifulSoup object of the direct URL page
-        
-    Returns:
-        list: List of download links with their text
-    """
-    server_texts = [
-        "Download [Server : 10Gbps]",
-        "Download [Server : 1]",
-        "Download [PixeLServer : 2]"
-    ]
-    
-    links = []
-    for a in soup.find_all("a"):
-        link_text = a.get_text(strip=True)
-        if link_text in server_texts:
-            href = a.get("href")
-            if href:
-                links.append({
-                    "label": link_text, 
-                    "value": href
-                })
-    
-    return links
